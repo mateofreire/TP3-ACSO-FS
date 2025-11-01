@@ -56,7 +56,7 @@ TDriverFAT::~TDriverFAT()
 int TDriverFAT::LevantarDatosSuperbloque()
 {
 /* Salir */
-return(CODERROR_NO_IMPLEMENTADO);
+return(CODERROR_FILESYSTEM_DESCONOCIDO);
 }
 
 
@@ -75,7 +75,7 @@ return(CODERROR_NO_IMPLEMENTADO);
 int TDriverFAT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectorio> &Entradas)
 {
 /* Salir */
-return(CODERROR_NO_IMPLEMENTADO);
+return(CODERROR_FILESYSTEM_DESCONOCIDO);
 }
 
 
@@ -97,6 +97,6 @@ return(CODERROR_NO_IMPLEMENTADO);
 int TDriverFAT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &DataLen)
 {
 /* Salir */
-return(CODERROR_NO_IMPLEMENTADO);
+return(CODERROR_FILESYSTEM_DESCONOCIDO);
 }
 

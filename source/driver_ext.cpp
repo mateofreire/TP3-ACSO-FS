@@ -106,8 +106,6 @@ int TDriverEXT::LevantarDatosSuperbloque()
 
 	DatosFS.DatosEspecificos.EXT.NroGrupos = DatosFS.NumeroDeClusters / DatosFS.DatosEspecificos.EXT.ClustersPorGrupo;
 
-    MostrarDatosSuperbloque();
-
 	return CODERROR_NINGUNO;
 }
 
