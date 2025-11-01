@@ -108,6 +108,49 @@ int TDriverEXT::LevantarDatosSuperbloque()
 
 	DatosFS.DatosEspecificos.EXT.NroGrupos = DatosFS.NumeroDeClusters / DatosFS.DatosEspecificos.EXT.ClustersPorGrupo;
 
+	/* Para EXT2: leer la Tabla de Descriptores de Grupo (GDT) con TEntradaDescGrupoEXT23
+	   y completar DatosGrupo. */
+	{
+		unsigned desc_size = sizeof(TEntradaDescGrupoEXT23);
+		unsigned sectors_per_cluster = DatosFS.BytesPorCluster / DatosFS.BytesPorSector;
+
+		/* En EXT2 la GDT comienza en el bloque 2 si el tamaño de bloque es 1024, sino en el bloque 1. */
+		unsigned gd_start_block = (DatosFS.BytesPorCluster == 1024) ? 2 : 1;
+
+		unsigned desc_per_block = DatosFS.BytesPorCluster / desc_size;
+
+		/* Preparar vector */
+		DatosFS.DatosEspecificos.EXT.DatosGrupo.clear();
+		DatosFS.DatosEspecificos.EXT.DatosGrupo.resize(DatosFS.DatosEspecificos.EXT.NroGrupos);
+
+		for (int i = 0; i < DatosFS.DatosEspecificos.EXT.NroGrupos; i++)
+		{
+			unsigned block_index = gd_start_block + (i / desc_per_block);
+			unsigned sector = block_index * sectors_per_cluster;
+
+			const unsigned char *pblock = PunteroASector(sector);
+			if (!pblock)
+				return CODERROR_SUPERBLOQUE_INVALIDO;
+
+			unsigned offset_in_block = (i % desc_per_block) * desc_size;
+			const unsigned char *p = pblock + offset_in_block;
+
+			/* Lectura little-endian desde p */
+			#define RD32P(o) ((unsigned int)(p[(o)] | (p[(o)+1] << 8) | (p[(o)+2] << 16) | (p[(o)+3] << 24)))
+
+			unsigned block_bitmap = RD32P(0);
+			unsigned inode_bitmap = RD32P(4);
+			unsigned inode_table  = RD32P(8);
+
+			DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterBitmapINodes = (unsigned long long)inode_bitmap;
+			DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterBitmapBloques = (unsigned long long)block_bitmap;
+			DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterTablaINodes = (unsigned long long)inode_table;
+			DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterTablaBloques = 0;
+
+			#undef RD32P
+		}
+	}
+
 	return CODERROR_NINGUNO;
 }
 
