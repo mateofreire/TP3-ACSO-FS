@@ -108,36 +108,6 @@ int TDriverEXT::LevantarDatosSuperbloque()
 
 	DatosFS.DatosEspecificos.EXT.NroGrupos = DatosFS.NumeroDeClusters / DatosFS.DatosEspecificos.EXT.ClustersPorGrupo;
 
-        /* ---------- Cargar descriptores de grupo (GDT) ---------- */
-    DatosFS.DatosEspecificos.EXT.DatosGrupo.clear();
-    DatosFS.DatosEspecificos.EXT.DatosGrupo.resize(DatosFS.DatosEspecificos.EXT.NroGrupos);
-
-    unsigned tamGrupoDesc = sizeof(TEntradaDescGrupoEXT23);
-    unsigned tamBloque    = DatosFS.BytesPorCluster;
-    unsigned descPorBloque = tamBloque / tamGrupoDesc;
-
-    // La GDT empieza justo después del superbloque:
-    // - Si blocksize = 1024 → superbloque está en bloque 1 y GDT arranca en bloque 2
-    // - Si blocksize > 1024 → superbloque está en bloque 1 igualmente
-    unsigned bloqueInicioGDT = 2;
-
-    for (int g = 0; g < DatosFS.DatosEspecificos.EXT.NroGrupos; g++) {
-        unsigned bloque = bloqueInicioGDT + (g / descPorBloque);
-        unsigned offset = (g % descPorBloque) * tamGrupoDesc;
-
-        // Convertir bloque a sector
-        unsigned sectoresPorBloque = DatosFS.BytesPorCluster / DatosFS.BytesPorSector;
-        const unsigned char *ptr = PunteroASector((__u64)bloque * sectoresPorBloque);
-        if (!ptr) continue;
-
-        const TEntradaDescGrupoEXT23 *desc = reinterpret_cast<const TEntradaDescGrupoEXT23*>(ptr + offset);
-
-        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterBitmapBloques = (__u64)desc->block_bitmap;
-        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterBitmapINodes  = (__u64)desc->inode_bitmap;
-        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterTablaINodes   = (__u64)desc->inode_table;
-        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterTablaBloques  = 0; // No lo usa EXT2 clásico
-    }
-
 	return CODERROR_NINGUNO;
 }
 
