@@ -106,6 +106,8 @@ int TDriverEXT::LevantarDatosSuperbloque()
 
 	DatosFS.DatosEspecificos.EXT.NroGrupos = DatosFS.NumeroDeClusters / DatosFS.DatosEspecificos.EXT.ClustersPorGrupo;
 
+    MostrarDatosSuperbloque();
+
 	return CODERROR_NINGUNO;
 }
 
@@ -121,13 +123,12 @@ int TDriverEXT::LevantarDatosSuperbloque()
  *	   Entradas: Arreglo con cada una de las entradas.										*
  *																	*
  ****************************************************************************************************************************************/
-/*
 int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectorio> &Entradas)
 {
-Salir
+/* Salir */
 return(CODERROR_NO_IMPLEMENTADO);
 }
-*/
+
 /****************************************************************************************************************************************
  *																	*
  *						     TDriverEXT :: LeerArchivo								*
@@ -141,10 +142,8 @@ return(CODERROR_NO_IMPLEMENTADO);
  *	   DataLen: Tamaño en bytes del buffer devuelto.										*
  *																	*						*
  ****************************************************************************************************************************************/
-/*
- int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &DataLen)
+int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &DataLen)
 {
-Salir
+/* Salir */
 return(CODERROR_NO_IMPLEMENTADO);
 }
-*/

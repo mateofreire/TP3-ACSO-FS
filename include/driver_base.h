@@ -196,7 +196,7 @@ protected:
 	virtual int 			ListarDirectorio(const char *Path, std::vector<TEntradaDirectorio> &Entradas) = 0;
 	virtual int 			LeerArchivo(const char *Path, unsigned char *&Data, unsigned &DataLen) = 0;
 
-private:
+protected:
 	unsigned			LongitudDiskData;
 	const unsigned char		*DiskData;
 
