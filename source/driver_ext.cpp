@@ -108,42 +108,6 @@ int TDriverEXT::LevantarDatosSuperbloque()
 
 	DatosFS.DatosEspecificos.EXT.NroGrupos = DatosFS.NumeroDeClusters / DatosFS.DatosEspecificos.EXT.ClustersPorGrupo;
 
-        /* ---------- Levantar descriptores de grupo (GDT) ---------- */
-    DatosFS.DatosEspecificos.EXT.DatosGrupo.clear();
-    DatosFS.DatosEspecificos.EXT.DatosGrupo.resize(DatosFS.DatosEspecificos.EXT.NroGrupos);
-
-    unsigned tamDesc = sizeof(TEntradaDescGrupoEXT23);
-    unsigned tamBloque = DatosFS.BytesPorCluster;
-    unsigned descPorBloque = tamBloque / tamDesc;
-
-    // La tabla de descriptores arranca justo después del superbloque:
-    // En EXT2 con bloque de 1024B: superbloque = bloque 1 → GDT = bloque 2
-    // (Si el bloque fuera >1024B también arranca en 2)
-    unsigned bloqueInicioGDT = 2;
-    unsigned sectoresPorBloque = DatosFS.BytesPorCluster / DatosFS.BytesPorSector;
-
-    for (int g = 0; g < DatosFS.DatosEspecificos.EXT.NroGrupos; g++) {
-        unsigned bloque = bloqueInicioGDT + (g / descPorBloque);
-        unsigned offset = (g % descPorBloque) * tamDesc;
-
-        const unsigned char *ptr = PunteroASector((__u64)bloque * sectoresPorBloque);
-        if (!ptr) continue;
-
-        const TEntradaDescGrupoEXT23 *desc =
-            reinterpret_cast<const TEntradaDescGrupoEXT23 *>(ptr + offset);
-
-        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterBitmapBloques = (__u64)desc->block_bitmap;
-        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterBitmapINodes  = (__u64)desc->inode_bitmap;
-        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterTablaINodes   = (__u64)desc->inode_table;
-        // cantidad de bloques que ocupa la tabla de i-nodes en este grupo
-        unsigned blocks_inode_table =
-            (unsigned)((DatosFS.DatosEspecificos.EXT.INodesPorGrupo * DatosFS.DatosEspecificos.EXT.BytesPorINode
-                    + DatosFS.BytesPorCluster - 1) / DatosFS.BytesPorCluster);
-
-        // primer bloque de datos del grupo (lo que la cátedra llama “Tabla Bloques”)
-        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterTablaBloques =
-            (__u64)(desc->inode_table + blocks_inode_table);
-    }
 	return CODERROR_NINGUNO;
 }
 
