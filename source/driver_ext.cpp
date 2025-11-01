@@ -145,7 +145,17 @@ int TDriverEXT::LevantarDatosSuperbloque()
 			DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterBitmapINodes = (unsigned long long)inode_bitmap;
 			DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterBitmapBloques = (unsigned long long)block_bitmap;
 			DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterTablaINodes = (unsigned long long)inode_table;
-			DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterTablaBloques = 0;
+
+			/* Calcular el primer bloque de datos del grupo: justo después de la tabla de inodos.
+			   Número de bloques usados por la tabla de inodos = ceil(INodesPorGrupo * BytesPorINode / BytesPorCluster) */
+			{
+				unsigned long long inodes_per_group = (unsigned long long)DatosFS.DatosEspecificos.EXT.INodesPorGrupo;
+				unsigned long long bytes_per_inode = (unsigned long long)DatosFS.DatosEspecificos.EXT.BytesPorINode;
+				unsigned long long bytes_per_cluster = (unsigned long long)DatosFS.BytesPorCluster;
+
+				unsigned long long inode_table_blocks = (inodes_per_group * bytes_per_inode + bytes_per_cluster - 1) / bytes_per_cluster;
+				DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterTablaBloques = (unsigned long long)inode_table + inode_table_blocks;
+			}
 
 			#undef RD32P
 		}
