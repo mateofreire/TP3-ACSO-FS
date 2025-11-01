@@ -75,7 +75,6 @@ int TDriverEXT::LevantarDatosSuperbloque()
 	/* Leer campos básicos EXT2 del superbloque: */
 	unsigned s_inodes_count      = RD32(0x00);
 	unsigned s_blocks_count_lo   = RD32(0x04);
-    unsigned s_r_blocks_count    = RD32(0x08);
 	unsigned s_log_block_size    = RD32(0x18);
 	unsigned s_blocks_per_group  = RD32(0x20);
 	unsigned s_inodes_per_group  = RD32(0x28);
@@ -83,6 +82,7 @@ int TDriverEXT::LevantarDatosSuperbloque()
 	unsigned s_feat_compat       = RD32(0x5C);
 	unsigned s_feat_incompat     = RD32(0x60);
 	unsigned s_feat_ro_compat    = RD32(0x64);
+    unsigned s_r_blocks_count    = RD16(0xCE);
 
 	/* Esta cátedra usa “Cluster” ~ “Block” en EXT: BlockSize = 1024 << s_log_block_size. */
 	DatosFS.TipoFilesystem               = tfsEXT2;
@@ -107,6 +107,36 @@ int TDriverEXT::LevantarDatosSuperbloque()
 		return CODERROR_SUPERBLOQUE_INVALIDO;
 
 	DatosFS.DatosEspecificos.EXT.NroGrupos = DatosFS.NumeroDeClusters / DatosFS.DatosEspecificos.EXT.ClustersPorGrupo;
+
+        /* ---------- Cargar descriptores de grupo (GDT) ---------- */
+    DatosFS.DatosEspecificos.EXT.DatosGrupo.clear();
+    DatosFS.DatosEspecificos.EXT.DatosGrupo.resize(DatosFS.DatosEspecificos.EXT.NroGrupos);
+
+    unsigned tamGrupoDesc = sizeof(TEntradaDescGrupoEXT23);
+    unsigned tamBloque    = DatosFS.BytesPorCluster;
+    unsigned descPorBloque = tamBloque / tamGrupoDesc;
+
+    // La GDT empieza justo después del superbloque:
+    // - Si blocksize = 1024 → superbloque está en bloque 1 y GDT arranca en bloque 2
+    // - Si blocksize > 1024 → superbloque está en bloque 1 igualmente
+    unsigned bloqueInicioGDT = 2;
+
+    for (int g = 0; g < DatosFS.DatosEspecificos.EXT.NroGrupos; g++) {
+        unsigned bloque = bloqueInicioGDT + (g / descPorBloque);
+        unsigned offset = (g % descPorBloque) * tamGrupoDesc;
+
+        // Convertir bloque a sector
+        unsigned sectoresPorBloque = DatosFS.BytesPorCluster / DatosFS.BytesPorSector;
+        const unsigned char *ptr = PunteroASector((__u64)bloque * sectoresPorBloque);
+        if (!ptr) continue;
+
+        const TEntradaDescGrupoEXT23 *desc = reinterpret_cast<const TEntradaDescGrupoEXT23*>(ptr + offset);
+
+        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterBitmapBloques = (__u64)desc->block_bitmap;
+        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterBitmapINodes  = (__u64)desc->inode_bitmap;
+        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterTablaINodes   = (__u64)desc->inode_table;
+        DatosFS.DatosEspecificos.EXT.DatosGrupo[g].ClusterTablaBloques  = 0; // No lo usa EXT2 clásico
+    }
 
 	return CODERROR_NINGUNO;
 }
