@@ -53,8 +53,60 @@ TDriverEXT::~TDriverEXT()
  * ****************************************************************************************************************************************/
 int TDriverEXT::LevantarDatosSuperbloque()
 {
-/* Salir */
-return(CODERROR_NO_IMPLEMENTADO);
+/* Para poder usar PunteroASector() más allá del sector 0 necesitamos fijar BytesPorSector.
+	   EXT2/3/4 usan típicamente 512 B/sector, así que partimos de 512. */
+	DatosFS.BytesPorSector = 512;
+
+	/* El superbloque está a 1024 bytes desde el inicio ⇒ sector lógico 2. */
+	const unsigned char *sb = PunteroASector(2);
+	if (!sb)
+		return CODERROR_SUPERBLOQUE_INVALIDO;
+
+	/* Helpers de lectura (valores little-endian en disco). */
+	auto rd16 = [&](unsigned off) -> unsigned { return (__le16)(sb + off); };
+	auto rd32 = [&](unsigned off) -> unsigned { return (__le32)(sb + off); };
+
+	/* Validar firma del superbloque (offset 0x38 dentro del superbloque). */
+	if (rd16(0x38) != 0xEF53)
+		return CODERROR_SUPERBLOQUE_INVALIDO;
+
+	/* Leer campos básicos EXT2 del superbloque: */
+	unsigned s_inodes_count      = rd32(0x00);
+	unsigned s_blocks_count_lo   = rd32(0x04);
+    unsigned s_r_blocks_count    = rd32(0x08);
+	unsigned s_log_block_size    = rd32(0x18);
+	unsigned s_blocks_per_group  = rd32(0x20);
+	unsigned s_inodes_per_group  = rd32(0x28);
+	unsigned s_inode_size        = ((__le16)(sb + 0x58)); /* EXT2 dinámico: tamaño de inode */
+	unsigned s_feat_compat       = rd32(0x5C);
+	unsigned s_feat_incompat     = rd32(0x60);
+	unsigned s_feat_ro_compat    = rd32(0x64);
+
+	/* Esta cátedra usa “Cluster” ~ “Block” en EXT: BlockSize = 1024 << s_log_block_size. */
+	DatosFS.TipoFilesystem               = tfsEXT2;
+	DatosFS.BytesPorCluster              = 1024u << s_log_block_size;
+	DatosFS.NumeroDeClusters             = s_blocks_count_lo;
+
+	/* Campos específicos EXT que pide el enunciado: */
+	DatosFS.DatosEspecificos.EXT.CaracteristicasCompatibles   = (int)s_feat_compat;
+	DatosFS.DatosEspecificos.EXT.CaracteristicasIncompatibles = (int)s_feat_incompat;
+	DatosFS.DatosEspecificos.EXT.CaracteristicasSoloLectura   = (int)s_feat_ro_compat;
+	DatosFS.DatosEspecificos.EXT.NumeroDeINodes               = (int)s_inodes_count;
+    DatosFS.DatosEspecificos.EXT.ClustersReservadosGDT        = (int)s_r_blocks_count;
+	DatosFS.DatosEspecificos.EXT.ClustersPorGrupo             = (int)s_blocks_per_group;
+	DatosFS.DatosEspecificos.EXT.INodesPorGrupo               = (int)s_inodes_per_group;
+	DatosFS.DatosEspecificos.EXT.BytesPorINode                = (int)s_inode_size;
+
+	/* EXT2 puro: estos dos suelen ser 0; se piden en la estructura, los dejamos en 0. */
+	DatosFS.DatosEspecificos.EXT.PeriodoAgrupadoFlex          = 0;
+
+	/* Derivados: número de grupos. */
+	if (DatosFS.DatosEspecificos.EXT.ClustersPorGrupo == 0)
+		return CODERROR_SUPERBLOQUE_INVALIDO;
+
+	DatosFS.DatosEspecificos.EXT.NroGrupos = DatosFS.NumeroDeClusters / DatosFS.DatosEspecificos.EXT.ClustersPorGrupo;
+
+	return CODERROR_NINGUNO;
 }
 
 /****************************************************************************************************************************************
