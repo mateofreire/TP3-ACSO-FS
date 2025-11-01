@@ -63,24 +63,24 @@ int TDriverEXT::LevantarDatosSuperbloque()
 		return CODERROR_SUPERBLOQUE_INVALIDO;
 
 	/* Helpers de lectura (valores little-endian en disco). */
-	auto rd16 = [&](unsigned off) -> unsigned { return (__le16)(sb + off); };
-	auto rd32 = [&](unsigned off) -> unsigned { return (__le32)(sb + off); };
+    #define RD16(off)  ((unsigned short)(sb[off] | (sb[(off)+1] << 8)))
+    #define RD32(off)  ((unsigned int)(sb[off] | (sb[(off)+1] << 8) | (sb[(off)+2] << 16) | (sb[(off)+3] << 24)))
 
 	/* Validar firma del superbloque (offset 0x38 dentro del superbloque). */
-	if (rd16(0x38) != 0xEF53)
+	if (RD16(0x38) != 0xEF53)
 		return CODERROR_SUPERBLOQUE_INVALIDO;
 
 	/* Leer campos básicos EXT2 del superbloque: */
-	unsigned s_inodes_count      = rd32(0x00);
-	unsigned s_blocks_count_lo   = rd32(0x04);
-    unsigned s_r_blocks_count    = rd32(0x08);
-	unsigned s_log_block_size    = rd32(0x18);
-	unsigned s_blocks_per_group  = rd32(0x20);
-	unsigned s_inodes_per_group  = rd32(0x28);
-	unsigned s_inode_size        = ((__le16)(sb + 0x58)); /* EXT2 dinámico: tamaño de inode */
-	unsigned s_feat_compat       = rd32(0x5C);
-	unsigned s_feat_incompat     = rd32(0x60);
-	unsigned s_feat_ro_compat    = rd32(0x64);
+	unsigned s_inodes_count      = RD32(0x00);
+	unsigned s_blocks_count_lo   = RD32(0x04);
+    unsigned s_r_blocks_count    = RD32(0x08);
+	unsigned s_log_block_size    = RD32(0x18);
+	unsigned s_blocks_per_group  = RD32(0x20);
+	unsigned s_inodes_per_group  = RD32(0x28);
+	unsigned s_inode_size        = RD16(0x58);
+	unsigned s_feat_compat       = RD32(0x5C);
+	unsigned s_feat_incompat     = RD32(0x60);
+	unsigned s_feat_ro_compat    = RD32(0x64);
 
 	/* Esta cátedra usa “Cluster” ~ “Block” en EXT: BlockSize = 1024 << s_log_block_size. */
 	DatosFS.TipoFilesystem               = tfsEXT2;
@@ -98,7 +98,7 @@ int TDriverEXT::LevantarDatosSuperbloque()
 	DatosFS.DatosEspecificos.EXT.BytesPorINode                = (int)s_inode_size;
 
 	/* EXT2 puro: estos dos suelen ser 0; se piden en la estructura, los dejamos en 0. */
-	DatosFS.DatosEspecificos.EXT.PeriodoAgrupadoFlex          = 0;
+	DatosFS.DatosEspecificos.EXT.PeriodoAgrupadoFlex = 0;
 
 	/* Derivados: número de grupos. */
 	if (DatosFS.DatosEspecificos.EXT.ClustersPorGrupo == 0)
