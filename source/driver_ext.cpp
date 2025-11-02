@@ -53,22 +53,19 @@ TDriverEXT::~TDriverEXT()
  * ****************************************************************************************************************************************/
 int TDriverEXT::LevantarDatosSuperbloque()
 {
-/* ACORDARSE QUE HARDCODEAMOS EL PeriodoAgrupadoFlex */
-/* ACORDARSE QUE NOS DIO MAL CON LA REF EL nro de clusters reservado GDT */
-/* Para poder usar PunteroASector() más allá del sector 0 necesitamos fijar BytesPorSector.
-	   EXT2/3/4 usan típicamente 512 B/sector, así que partimos de 512. */
+	/* EXT2 usa 512 B/sector */
 	DatosFS.BytesPorSector = 512;
 
-	/* El superbloque está a 1024 bytes desde el inicio ⇒ sector lógico 2. */
+	/* El superbloque está a 1024 bytes desde el inicio (sector lógico 2) */
 	const unsigned char *sb = PunteroASector(2);
 	if (!sb)
 		return CODERROR_SUPERBLOQUE_INVALIDO;
 
-	/* Helpers de lectura (valores little-endian en disco). */
+	/* Helpers de lectura (valores little-endian en disco) */
     #define RD16(off)  ((unsigned short)(sb[off] | (sb[(off)+1] << 8)))
     #define RD32(off)  ((unsigned int)(sb[off] | (sb[(off)+1] << 8) | (sb[(off)+2] << 16) | (sb[(off)+3] << 24)))
 
-	/* Validar firma del superbloque (offset 0x38 dentro del superbloque). */
+	/* Validar firma del superbloque (offset 0x38 dentro del superbloque) */
 	if (RD16(0x38) != 0xEF53)
 		return CODERROR_SUPERBLOQUE_INVALIDO;
 
@@ -84,12 +81,12 @@ int TDriverEXT::LevantarDatosSuperbloque()
 	unsigned s_feat_ro_compat    = RD32(0x64);
     unsigned s_r_blocks_count    = RD16(0xCE);
 
-	/* Esta cátedra usa “Cluster” ~ “Block” en EXT: BlockSize = 1024 << s_log_block_size. */
+	/* BlockSize = 1024 << s_log_block_size */
 	DatosFS.TipoFilesystem               = tfsEXT2;
 	DatosFS.BytesPorCluster              = 1024u << s_log_block_size;
 	DatosFS.NumeroDeClusters             = s_blocks_count_lo;
 
-	/* Campos específicos EXT que pide el enunciado: */
+	/* Campos específicos */
 	DatosFS.DatosEspecificos.EXT.CaracteristicasCompatibles   = (int)s_feat_compat;
 	DatosFS.DatosEspecificos.EXT.CaracteristicasIncompatibles = (int)s_feat_incompat;
 	DatosFS.DatosEspecificos.EXT.CaracteristicasSoloLectura   = (int)s_feat_ro_compat;
@@ -98,23 +95,20 @@ int TDriverEXT::LevantarDatosSuperbloque()
 	DatosFS.DatosEspecificos.EXT.ClustersPorGrupo             = (int)s_blocks_per_group;
 	DatosFS.DatosEspecificos.EXT.INodesPorGrupo               = (int)s_inodes_per_group;
 	DatosFS.DatosEspecificos.EXT.BytesPorINode                = (int)s_inode_size;
-
-	/* EXT2 puro: estos dos suelen ser 0; se piden en la estructura, los dejamos en 0. */
 	DatosFS.DatosEspecificos.EXT.PeriodoAgrupadoFlex = 0;
 
-	/* Derivados: número de grupos. */
+	/* Derivados: número de grupos */
 	if (DatosFS.DatosEspecificos.EXT.ClustersPorGrupo == 0)
 		return CODERROR_SUPERBLOQUE_INVALIDO;
 
 	DatosFS.DatosEspecificos.EXT.NroGrupos = DatosFS.NumeroDeClusters / DatosFS.DatosEspecificos.EXT.ClustersPorGrupo;
 
-	/* Para EXT2: leer la Tabla de Descriptores de Grupo (GDT) con TEntradaDescGrupoEXT23
-	   y completar DatosGrupo. */
+	/* Leer la Tabla de Descriptores de Grupo (GDT) con TEntradaDescGrupoEXT23 y completar DatosGrupo */
 	{
 		unsigned desc_size = sizeof(TEntradaDescGrupoEXT23);
 		unsigned sectors_per_cluster = DatosFS.BytesPorCluster / DatosFS.BytesPorSector;
 
-		/* En EXT2 la GDT comienza en el bloque 2 si el tamaño de bloque es 1024, sino en el bloque 1. */
+		/* GDT comienza en el bloque 2 si el tamaño de bloque es 1024, sino en el bloque 1 */
 		unsigned gd_start_block = (DatosFS.BytesPorCluster == 1024) ? 2 : 1;
 
 		unsigned desc_per_block = DatosFS.BytesPorCluster / desc_size;
@@ -146,8 +140,7 @@ int TDriverEXT::LevantarDatosSuperbloque()
 			DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterBitmapBloques = (unsigned long long)block_bitmap;
 			DatosFS.DatosEspecificos.EXT.DatosGrupo[i].ClusterTablaINodes = (unsigned long long)inode_table;
 
-			/* Calcular el primer bloque de datos del grupo: justo después de la tabla de inodos.
-			   Número de bloques usados por la tabla de inodos = ceil(INodesPorGrupo * BytesPorINode / BytesPorCluster) */
+			/* Calcular el primer bloque de datos del grupo, que está justo después de la tabla de inodos */
 			{
 				unsigned long long inodes_per_group = (unsigned long long)DatosFS.DatosEspecificos.EXT.INodesPorGrupo;
 				unsigned long long bytes_per_inode = (unsigned long long)DatosFS.DatosEspecificos.EXT.BytesPorINode;
@@ -463,6 +456,376 @@ int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectori
 		}
 	}
 
+	/* Manejar puntero simple (i_block[12]), doble (i_block[13]) y triple (i_block[14]) */
+	/* Cada entrada en un bloque de punteros es un uint32 little-endian con el número de cluster */
+	unsigned entradas_por_ptr = DatosFS.BytesPorCluster / 4;
+
+	/* Simple indirect */
+	if (inode_dir_root.i_block[12] != 0)
+	{
+		unsigned ptr_block = (unsigned)inode_dir_root.i_block[12];
+		const unsigned char *pp = PunteroASector((__u64)ptr_block * sectores_por_cluster);
+		if (!pp)
+			return CODERROR_LECTURA_DISCO;
+
+		for (unsigned pi = 0; pi < entradas_por_ptr; pi++)
+		{
+			unsigned offp = pi * 4;
+			unsigned data_block = pp[offp] | (pp[offp+1] << 8) | (pp[offp+2] << 16) | (pp[offp+3] << 24);
+			if (data_block == 0)
+				continue;
+
+			const unsigned char *db = PunteroASector((__u64)data_block * sectores_por_cluster);
+			if (!db)
+				return CODERROR_LECTURA_DISCO;
+
+			unsigned off = 0;
+			while (off < (unsigned)DatosFS.BytesPorCluster)
+			{
+				const unsigned char *entry = db + off;
+				unsigned inode_entry = entry[0] | (entry[1] << 8) | (entry[2] << 16) | (entry[3] << 24);
+				unsigned rec_len = entry[4] | (entry[5] << 8);
+				unsigned name_len = entry[6];
+
+				if (rec_len == 0)
+					break;
+
+				if (inode_entry != 0 && name_len > 0 && name_len < rec_len)
+				{
+					std::string name((const char *)(entry + 8), name_len);
+
+					/* Leer inode de la entrada para obtener tamaño/tiempos/modo */
+					if (inode_entry == 0 || inode_entry > (unsigned)DatosFS.DatosEspecificos.EXT.NumeroDeINodes)
+					{
+						off += rec_len;
+						continue;
+					}
+
+					unsigned grupo_e = (inode_entry - 1) / inodes_por_grupo;
+					if (grupo_e >= nro_grupos)
+					{
+						off += rec_len;
+						continue;
+					}
+
+					unsigned long long tabla_inodos_e = DatosFS.DatosEspecificos.EXT.DatosGrupo[grupo_e].ClusterTablaINodes;
+					unsigned index_in_group_e = (inode_entry - 1) % inodes_por_grupo;
+					unsigned offset_in_table_e = index_in_group_e * bytes_por_inode;
+					unsigned block_offset_e = offset_in_table_e / DatosFS.BytesPorCluster;
+					unsigned offset_in_block_e = offset_in_table_e % DatosFS.BytesPorCluster;
+					unsigned block_e = (unsigned)(tabla_inodos_e + block_offset_e);
+
+					const unsigned char *pblock_e = PunteroASector((__u64)block_e * sectores_por_cluster);
+					if (!pblock_e)
+					{
+						off += rec_len;
+						continue;
+					}
+
+					TINodeEXT inode_e;
+					memset(&inode_e, 0, sizeof(inode_e));
+					if (offset_in_block_e + bytes_por_inode <= (unsigned)DatosFS.BytesPorCluster)
+					{
+						memcpy(&inode_e, pblock_e + offset_in_block_e, (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT));
+					}
+					else
+					{
+						unsigned first_chunk = (unsigned)DatosFS.BytesPorCluster - offset_in_block_e;
+						unsigned to_copy = (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT);
+						unsigned copied = 0;
+						if (first_chunk > 0)
+						{
+							unsigned c = (first_chunk < to_copy) ? first_chunk : to_copy;
+							memcpy(&((unsigned char*)&inode_e)[0], pblock_e + offset_in_block_e, c);
+							copied += c;
+						}
+						if (copied < to_copy)
+						{
+							const unsigned char *pblock2 = PunteroASector((__u64)(block_e + 1) * sectores_por_cluster);
+							if (pblock2)
+								memcpy(&((unsigned char*)&inode_e)[copied], pblock2, to_copy - copied);
+						}
+					}
+
+					/* Construir entrada */
+					TEntradaDirectorio e;
+					memset(&e, 0, sizeof(e));
+					e.Nombre = name;
+					unsigned long long size = (unsigned long long)inode_e.i_size_lo;
+					size |= ((unsigned long long)inode_e.i_size_high) << 32;
+					e.Bytes = size;
+					e.FechaCreacion = (time_t)inode_e.i_crtime;
+					e.FechaUltimoAcceso = (time_t)inode_e.i_atime;
+					e.FechaUltimaModificacion = (time_t)inode_e.i_mtime;
+					e.Flags = 0;
+					if (S_ISDIR(inode_e.i_mode))
+						e.Flags |= fedDIRECTORIO;
+					e.DatosEspecificos.EXT.INode = inode_entry;
+
+					Entradas.push_back(e);
+				}
+
+				off += rec_len;
+			}
+		}
+	}
+
+	/* Double indirect */
+	if (inode_dir_root.i_block[13] != 0)
+	{
+		unsigned dptr_block = (unsigned)inode_dir_root.i_block[13];
+		const unsigned char *pp1 = PunteroASector((__u64)dptr_block * sectores_por_cluster);
+		if (!pp1)
+			return CODERROR_LECTURA_DISCO;
+
+		for (unsigned pi1 = 0; pi1 < entradas_por_ptr; pi1++)
+		{
+			unsigned off1 = pi1 * 4;
+			unsigned ptr1 = pp1[off1] | (pp1[off1+1] << 8) | (pp1[off1+2] << 16) | (pp1[off1+3] << 24);
+			if (ptr1 == 0)
+				continue;
+
+			const unsigned char *pp2 = PunteroASector((__u64)ptr1 * sectores_por_cluster);
+			if (!pp2)
+				return CODERROR_LECTURA_DISCO;
+
+			for (unsigned pi2 = 0; pi2 < entradas_por_ptr; pi2++)
+			{
+				unsigned off2 = pi2 * 4;
+				unsigned data_block = pp2[off2] | (pp2[off2+1] << 8) | (pp2[off2+2] << 16) | (pp2[off2+3] << 24);
+				if (data_block == 0)
+					continue;
+
+				const unsigned char *db = PunteroASector((__u64)data_block * sectores_por_cluster);
+				if (!db)
+					return CODERROR_LECTURA_DISCO;
+
+				unsigned off = 0;
+				while (off < (unsigned)DatosFS.BytesPorCluster)
+				{
+					const unsigned char *entry = db + off;
+					unsigned inode_entry = entry[0] | (entry[1] << 8) | (entry[2] << 16) | (entry[3] << 24);
+					unsigned rec_len = entry[4] | (entry[5] << 8);
+					unsigned name_len = entry[6];
+
+					if (rec_len == 0)
+						break;
+
+					if (inode_entry != 0 && name_len > 0 && name_len < rec_len)
+					{
+						std::string name((const char *)(entry + 8), name_len);
+
+						/* Leer inode de la entrada para obtener tamaño/tiempos/modo */
+						if (inode_entry == 0 || inode_entry > (unsigned)DatosFS.DatosEspecificos.EXT.NumeroDeINodes)
+						{
+							off += rec_len;
+							continue;
+						}
+
+						unsigned grupo_e = (inode_entry - 1) / inodes_por_grupo;
+						if (grupo_e >= nro_grupos)
+						{
+							off += rec_len;
+							continue;
+						}
+
+						unsigned long long tabla_inodos_e = DatosFS.DatosEspecificos.EXT.DatosGrupo[grupo_e].ClusterTablaINodes;
+						unsigned index_in_group_e = (inode_entry - 1) % inodes_por_grupo;
+						unsigned offset_in_table_e = index_in_group_e * bytes_por_inode;
+						unsigned block_offset_e = offset_in_table_e / DatosFS.BytesPorCluster;
+						unsigned offset_in_block_e = offset_in_table_e % DatosFS.BytesPorCluster;
+						unsigned block_e = (unsigned)(tabla_inodos_e + block_offset_e);
+
+						const unsigned char *pblock_e = PunteroASector((__u64)block_e * sectores_por_cluster);
+						if (!pblock_e)
+						{
+							off += rec_len;
+							continue;
+						}
+
+						TINodeEXT inode_e;
+						memset(&inode_e, 0, sizeof(inode_e));
+						if (offset_in_block_e + bytes_por_inode <= (unsigned)DatosFS.BytesPorCluster)
+						{
+							memcpy(&inode_e, pblock_e + offset_in_block_e, (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT));
+						}
+						else
+						{
+							unsigned first_chunk = (unsigned)DatosFS.BytesPorCluster - offset_in_block_e;
+							unsigned to_copy = (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT);
+							unsigned copied = 0;
+							if (first_chunk > 0)
+							{
+								unsigned c = (first_chunk < to_copy) ? first_chunk : to_copy;
+								memcpy(&((unsigned char*)&inode_e)[0], pblock_e + offset_in_block_e, c);
+								copied += c;
+							}
+							if (copied < to_copy)
+							{
+								const unsigned char *pblock2 = PunteroASector((__u64)(block_e + 1) * sectores_por_cluster);
+								if (pblock2)
+									memcpy(&((unsigned char*)&inode_e)[copied], pblock2, to_copy - copied);
+							}
+						}
+
+						/* Construir entrada */
+						TEntradaDirectorio e;
+						memset(&e, 0, sizeof(e));
+						e.Nombre = name;
+						unsigned long long size = (unsigned long long)inode_e.i_size_lo;
+						size |= ((unsigned long long)inode_e.i_size_high) << 32;
+						e.Bytes = size;
+						e.FechaCreacion = (time_t)inode_e.i_crtime;
+						e.FechaUltimoAcceso = (time_t)inode_e.i_atime;
+						e.FechaUltimaModificacion = (time_t)inode_e.i_mtime;
+						e.Flags = 0;
+						if (S_ISDIR(inode_e.i_mode))
+							e.Flags |= fedDIRECTORIO;
+						e.DatosEspecificos.EXT.INode = inode_entry;
+
+						Entradas.push_back(e);
+					}
+
+					off += rec_len;
+				}
+			}
+		}
+	}
+
+	/* Triple indirect */
+	if (inode_dir_root.i_block[14] != 0)
+	{
+		unsigned tptr_block = (unsigned)inode_dir_root.i_block[14];
+		const unsigned char *pp1 = PunteroASector((__u64)tptr_block * sectores_por_cluster);
+		if (!pp1)
+			return CODERROR_LECTURA_DISCO;
+
+		for (unsigned pi1 = 0; pi1 < entradas_por_ptr; pi1++)
+		{
+			unsigned off1 = pi1 * 4;
+			unsigned ptr1 = pp1[off1] | (pp1[off1+1] << 8) | (pp1[off1+2] << 16) | (pp1[off1+3] << 24);
+			if (ptr1 == 0)
+				continue;
+
+			const unsigned char *pp2 = PunteroASector((__u64)ptr1 * sectores_por_cluster);
+			if (!pp2)
+				return CODERROR_LECTURA_DISCO;
+
+			for (unsigned pi2 = 0; pi2 < entradas_por_ptr; pi2++)
+			{
+				unsigned off2 = pi2 * 4;
+				unsigned ptr2 = pp2[off2] | (pp2[off2+1] << 8) | (pp2[off2+2] << 16) | (pp2[off2+3] << 24);
+				if (ptr2 == 0)
+					continue;
+
+				const unsigned char *pp3 = PunteroASector((__u64)ptr2 * sectores_por_cluster);
+				if (!pp3)
+					return CODERROR_LECTURA_DISCO;
+
+				for (unsigned pi3 = 0; pi3 < entradas_por_ptr; pi3++)
+				{
+					unsigned off3 = pi3 * 4;
+					unsigned data_block = pp3[off3] | (pp3[off3+1] << 8) | (pp3[off3+2] << 16) | (pp3[off3+3] << 24);
+					if (data_block == 0)
+						continue;
+
+					const unsigned char *db = PunteroASector((__u64)data_block * sectores_por_cluster);
+					if (!db)
+						return CODERROR_LECTURA_DISCO;
+
+					unsigned off = 0;
+					while (off < (unsigned)DatosFS.BytesPorCluster)
+					{
+						const unsigned char *entry = db + off;
+						unsigned inode_entry = entry[0] | (entry[1] << 8) | (entry[2] << 16) | (entry[3] << 24);
+						unsigned rec_len = entry[4] | (entry[5] << 8);
+						unsigned name_len = entry[6];
+
+						if (rec_len == 0)
+							break;
+
+						if (inode_entry != 0 && name_len > 0 && name_len < rec_len)
+						{
+							std::string name((const char *)(entry + 8), name_len);
+
+							/* Leer inode de la entrada para obtener tamaño/tiempos/modo */
+							if (inode_entry == 0 || inode_entry > (unsigned)DatosFS.DatosEspecificos.EXT.NumeroDeINodes)
+							{
+								off += rec_len;
+								continue;
+							}
+
+							unsigned grupo_e = (inode_entry - 1) / inodes_por_grupo;
+							if (grupo_e >= nro_grupos)
+							{
+								off += rec_len;
+								continue;
+							}
+
+							unsigned long long tabla_inodos_e = DatosFS.DatosEspecificos.EXT.DatosGrupo[grupo_e].ClusterTablaINodes;
+							unsigned index_in_group_e = (inode_entry - 1) % inodes_por_grupo;
+							unsigned offset_in_table_e = index_in_group_e * bytes_por_inode;
+							unsigned block_offset_e = offset_in_table_e / DatosFS.BytesPorCluster;
+							unsigned offset_in_block_e = offset_in_table_e % DatosFS.BytesPorCluster;
+							unsigned block_e = (unsigned)(tabla_inodos_e + block_offset_e);
+
+							const unsigned char *pblock_e = PunteroASector((__u64)block_e * sectores_por_cluster);
+							if (!pblock_e)
+							{
+								off += rec_len;
+								continue;
+							}
+
+							TINodeEXT inode_e;
+							memset(&inode_e, 0, sizeof(inode_e));
+							if (offset_in_block_e + bytes_por_inode <= (unsigned)DatosFS.BytesPorCluster)
+							{
+								memcpy(&inode_e, pblock_e + offset_in_block_e, (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT));
+							}
+							else
+							{
+								unsigned first_chunk = (unsigned)DatosFS.BytesPorCluster - offset_in_block_e;
+								unsigned to_copy = (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT);
+								unsigned copied = 0;
+								if (first_chunk > 0)
+								{
+									unsigned c = (first_chunk < to_copy) ? first_chunk : to_copy;
+									memcpy(&((unsigned char*)&inode_e)[0], pblock_e + offset_in_block_e, c);
+									copied += c;
+								}
+								if (copied < to_copy)
+								{
+									const unsigned char *pblock2 = PunteroASector((__u64)(block_e + 1) * sectores_por_cluster);
+									if (pblock2)
+										memcpy(&((unsigned char*)&inode_e)[copied], pblock2, to_copy - copied);
+								}
+							}
+
+							/* Construir entrada */
+							TEntradaDirectorio e;
+							memset(&e, 0, sizeof(e));
+							e.Nombre = name;
+							unsigned long long size = (unsigned long long)inode_e.i_size_lo;
+							size |= ((unsigned long long)inode_e.i_size_high) << 32;
+							e.Bytes = size;
+							e.FechaCreacion = (time_t)inode_e.i_crtime;
+							e.FechaUltimoAcceso = (time_t)inode_e.i_atime;
+							e.FechaUltimaModificacion = (time_t)inode_e.i_mtime;
+							e.Flags = 0;
+							if (S_ISDIR(inode_e.i_mode))
+								e.Flags |= fedDIRECTORIO;
+							e.DatosEspecificos.EXT.INode = inode_entry;
+
+							Entradas.push_back(e);
+						}
+
+						off += rec_len;
+					}
+				}
+			}
+		}
+	}
+
 	return CODERROR_NINGUNO;
 }
 
@@ -487,184 +850,108 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 	if (!Path)
 		return CODERROR_PARAMETROS_INVALIDOS;
 
-	/* Ruta absoluta */
+	/* Ruta debe ser absoluta */
 	if (Path[0] != '/')
 		return CODERROR_RUTA_NO_ABSOLUTA;
 
 	if (DatosFS.TipoFilesystem != tfsEXT2)
 		return CODERROR_FILESYSTEM_DESCONOCIDO;
 
-	unsigned sectores_por_cluster = DatosFS.BytesPorCluster / DatosFS.BytesPorSector;
+	/* Separar path en directorio padre y nombre */
+	std::string ruta(Path);
+	if (ruta.empty())
+		return CODERROR_PARAMETROS_INVALIDOS;
 
-	/* Shortcut variables */
+	/* Buscar el último '/' */
+	size_t last = ruta.find_last_of('/');
+	std::string padre, nombre;
+	if (last == std::string::npos)
+		return CODERROR_RUTA_NO_ABSOLUTA; /* debería empezar con '/' */
+	if (last == 0)
+		padre = "/";
+	else
+		padre = ruta.substr(0, last);
+	nombre = ruta.substr(last + 1);
+
+	if (nombre.empty())
+		return CODERROR_ARCHIVO_INEXISTENTE;
+
+	/* Usar ListarDirectorio para resolver el inode del archivo en el directorio padre */
+	std::vector<TEntradaDirectorio> entradas;
+	int rc = ListarDirectorio(padre.c_str(), entradas);
+	if (rc != CODERROR_NINGUNO)
+		return rc;
+
+	unsigned inode_target = 0;
+	for (size_t i = 0; i < entradas.size(); i++)
+	{
+		if (entradas[i].Nombre == nombre)
+		{
+			inode_target = (unsigned)entradas[i].DatosEspecificos.EXT.INode;
+			break;
+		}
+	}
+
+	if (inode_target == 0)
+		return CODERROR_ARCHIVO_INEXISTENTE;
+
+	/* Leer inode */
+	unsigned sectores_por_cluster = DatosFS.BytesPorCluster / DatosFS.BytesPorSector;
 	unsigned inodes_por_grupo = (unsigned)DatosFS.DatosEspecificos.EXT.INodesPorGrupo;
 	unsigned bytes_por_inode = (unsigned)DatosFS.DatosEspecificos.EXT.BytesPorINode;
 	unsigned nro_grupos = (unsigned)DatosFS.DatosEspecificos.EXT.NroGrupos;
 
-	/* Resolver la ruta componente a componente (igual que en ListarDirectorio) */
-	unsigned current_inode = EXT_ROOT_INO; /* 2 */
-	std::string ruta(Path);
-
-	if (ruta != "/")
-	{
-		size_t pos = 1; /* saltar primer slash */
-		while (pos < ruta.size())
-		{
-			size_t next = ruta.find('/', pos);
-			std::string componente = (next==std::string::npos) ? ruta.substr(pos) : ruta.substr(pos, next-pos);
-			if (componente.empty())
-			{
-				pos = (next==std::string::npos)? ruta.size() : next+1;
-				continue;
-			}
-
-			if (current_inode == 0 || current_inode > (unsigned)DatosFS.DatosEspecificos.EXT.NumeroDeINodes)
-				return CODERROR_ARCHIVO_INEXISTENTE;
-
-			unsigned grupo = (current_inode - 1) / inodes_por_grupo;
-			if (grupo >= nro_grupos)
-				return CODERROR_ARCHIVO_INEXISTENTE;
-
-			unsigned long long tabla_inodos = DatosFS.DatosEspecificos.EXT.DatosGrupo[grupo].ClusterTablaINodes;
-			unsigned index_in_group = (current_inode - 1) % inodes_por_grupo;
-			unsigned offset_in_table = index_in_group * bytes_por_inode;
-
-			unsigned block_offset = offset_in_table / DatosFS.BytesPorCluster;
-			unsigned offset_in_block = offset_in_table % DatosFS.BytesPorCluster;
-
-			unsigned block = (unsigned)(tabla_inodos + block_offset);
-			const unsigned char *pblock = PunteroASector((__u64)block * sectores_por_cluster);
-			if (!pblock)
-				return CODERROR_LECTURA_DISCO;
-
-			TINodeEXT inode_dir;
-			memset(&inode_dir, 0, sizeof(inode_dir));
-
-			/* Copiar el inode, manejando cruce de cluster si es necesario */
-			if (offset_in_block + bytes_por_inode <= (unsigned)DatosFS.BytesPorCluster)
-			{
-				memcpy(&inode_dir, pblock + offset_in_block, (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT));
-			}
-			else
-			{
-				unsigned first_chunk = (unsigned)DatosFS.BytesPorCluster - offset_in_block;
-				unsigned to_copy = (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT);
-				unsigned copied = 0;
-				if (first_chunk > 0)
-				{
-					unsigned c = (first_chunk < to_copy) ? first_chunk : to_copy;
-					memcpy(&((unsigned char*)&inode_dir)[0], pblock + offset_in_block, c);
-					copied += c;
-				}
-				if (copied < to_copy)
-				{
-					const unsigned char *pblock2 = PunteroASector((__u64)(block + 1) * sectores_por_cluster);
-					if (!pblock2)
-						return CODERROR_LECTURA_DISCO;
-					memcpy(&((unsigned char*)&inode_dir)[copied], pblock2, to_copy - copied);
-				}
-			}
-
-			/* Verificar que sea directorio para poder buscar dentro */
-			if (!S_ISDIR(inode_dir.i_mode))
-				return CODERROR_ARCHIVO_INEXISTENTE;
-
-			/* Buscar el componente dentro de las entradas del directorio */
-			bool found = false;
-			for (int bi = 0; bi < 12 && !found; bi++)
-			{
-				unsigned data_block = (unsigned)inode_dir.i_block[bi];
-				if (data_block == 0)
-					continue;
-
-				const unsigned char *db = PunteroASector((__u64)data_block * sectores_por_cluster);
-				if (!db)
-					return CODERROR_LECTURA_DISCO;
-
-				unsigned off = 0;
-				while (off < (unsigned)DatosFS.BytesPorCluster)
-				{
-					const unsigned char *entry = db + off;
-					unsigned inode_entry = entry[0] | (entry[1] << 8) | (entry[2] << 16) | (entry[3] << 24);
-					unsigned rec_len = entry[4] | (entry[5] << 8);
-					unsigned name_len = entry[6];
-
-					if (rec_len == 0)
-						break;
-
-					if (inode_entry != 0 && name_len > 0 && name_len < rec_len)
-					{
-						std::string name((const char *)(entry + 8), name_len);
-						if (name == componente)
-						{
-							current_inode = inode_entry;
-							found = true;
-							break;
-						}
-					}
-
-					off += rec_len;
-				}
-			}
-
-			if (!found)
-				return CODERROR_ARCHIVO_INEXISTENTE;
-
-			pos = (next==std::string::npos)? ruta.size() : next+1;
-		}
-	}
-
-	/* Ahora current_inode es el inode del archivo a leer: leerlo */
-	if (current_inode == 0 || current_inode > (unsigned)DatosFS.DatosEspecificos.EXT.NumeroDeINodes)
+	if (inode_target == 0 || inode_target > (unsigned)DatosFS.DatosEspecificos.EXT.NumeroDeINodes)
 		return CODERROR_ARCHIVO_INEXISTENTE;
 
-	unsigned grupo_file = (current_inode - 1) / inodes_por_grupo;
-	if (grupo_file >= nro_grupos)
+	unsigned grupo = (inode_target - 1) / inodes_por_grupo;
+	if (grupo >= nro_grupos)
 		return CODERROR_ARCHIVO_INEXISTENTE;
 
-	unsigned long long tabla_inodos_file = DatosFS.DatosEspecificos.EXT.DatosGrupo[grupo_file].ClusterTablaINodes;
-	unsigned index_in_group_file = (current_inode - 1) % inodes_por_grupo;
-	unsigned offset_in_table_file = index_in_group_file * bytes_por_inode;
-	unsigned block_offset_file = offset_in_table_file / DatosFS.BytesPorCluster;
-	unsigned offset_in_block_file = offset_in_table_file % DatosFS.BytesPorCluster;
-	unsigned block_file = (unsigned)(tabla_inodos_file + block_offset_file);
+	unsigned long long tabla_inodos = DatosFS.DatosEspecificos.EXT.DatosGrupo[grupo].ClusterTablaINodes;
+	unsigned index_in_group = (inode_target - 1) % inodes_por_grupo;
+	unsigned offset_in_table = index_in_group * bytes_por_inode;
+	unsigned block_offset = offset_in_table / DatosFS.BytesPorCluster;
+	unsigned offset_in_block = offset_in_table % DatosFS.BytesPorCluster;
 
-	const unsigned char *pblock_file = PunteroASector((__u64)block_file * sectores_por_cluster);
-	if (!pblock_file)
+	unsigned block = (unsigned)(tabla_inodos + block_offset);
+	const unsigned char *pblock = PunteroASector((__u64)block * sectores_por_cluster);
+	if (!pblock)
 		return CODERROR_LECTURA_DISCO;
 
-	TINodeEXT inode_file;
-	memset(&inode_file, 0, sizeof(inode_file));
-	if (offset_in_block_file + bytes_por_inode <= (unsigned)DatosFS.BytesPorCluster)
+	TINodeEXT inode_f;
+	memset(&inode_f, 0, sizeof(inode_f));
+	if (offset_in_block + bytes_por_inode <= (unsigned)DatosFS.BytesPorCluster)
 	{
-		memcpy(&inode_file, pblock_file + offset_in_block_file, (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT));
+		memcpy(&inode_f, pblock + offset_in_block, (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT));
 	}
 	else
 	{
-		unsigned first_chunk = (unsigned)DatosFS.BytesPorCluster - offset_in_block_file;
+		unsigned first_chunk = (unsigned)DatosFS.BytesPorCluster - offset_in_block;
 		unsigned to_copy = (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT);
 		unsigned copied = 0;
 		if (first_chunk > 0)
 		{
 			unsigned c = (first_chunk < to_copy) ? first_chunk : to_copy;
-			memcpy(&((unsigned char*)&inode_file)[0], pblock_file + offset_in_block_file, c);
+			memcpy(&((unsigned char*)&inode_f)[0], pblock + offset_in_block, c);
 			copied += c;
 		}
 		if (copied < to_copy)
 		{
-			const unsigned char *pblock2 = PunteroASector((__u64)(block_file + 1) * sectores_por_cluster);
+			const unsigned char *pblock2 = PunteroASector((__u64)(block + 1) * sectores_por_cluster);
 			if (!pblock2)
 				return CODERROR_LECTURA_DISCO;
-			memcpy(&((unsigned char*)&inode_file)[copied], pblock2, to_copy - copied);
+			memcpy(&((unsigned char*)&inode_f)[copied], pblock2, to_copy - copied);
 		}
 	}
 
-	/* No permitir leer directorios como archivos */
-	if (S_ISDIR(inode_file.i_mode))
-		return CODERROR_ARCHIVO_INEXISTENTE;
+	/* Verificar que sea archivo regular */
+	if (!S_ISREG(inode_f.i_mode))
+		return CODERROR_ARCHIVO_INVALIDO;
 
-	unsigned long long size = (unsigned long long)inode_file.i_size_lo;
-	size |= ((unsigned long long)inode_file.i_size_high) << 32;
+	/* Calcular tamaño y reservar memoria */
+	unsigned long long size = (unsigned long long)inode_f.i_size_lo;
+	size |= ((unsigned long long)inode_f.i_size_high) << 32;
 
 	if (size == 0)
 	{
@@ -673,124 +960,171 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 		return CODERROR_NINGUNO;
 	}
 
-	/* Truncar a 32 bits si fuera mayor (interface uses unsigned) */
-	if (size > (unsigned long long)UINT_MAX)
-		return CODERROR_ARCHIVO_INVALIDO;
+	unsigned long long total_blocks = (size + DatosFS.BytesPorCluster - 1) / DatosFS.BytesPorCluster;
 
-	DataLen = (unsigned)size;
-	Data = (unsigned char*)malloc(DataLen);
+	unsigned entradas_por_ptr = DatosFS.BytesPorCluster / 4;
+
+	/* Alloc */
+	Data = (unsigned char*)malloc((size_t)size);
 	if (!Data)
 		return CODERROR_FALTA_MEMORIA;
+	DataLen = (unsigned)size;
 
-	unsigned cluster_size = (unsigned)DatosFS.BytesPorCluster;
-	unsigned blocks_needed = (DataLen + cluster_size - 1) / cluster_size;
-	unsigned copied_total = 0;
-
-	/* Helper macro para leer uint32 little-endian desde un puntero p en offset o índice */
-	#define RD32_FROM_PTR(p, off) ((unsigned)((p)[(off)] | ((p)[(off)+1] << 8) | ((p)[(off)+2] << 16) | ((p)[(off)+3] << 24)))
-
-	unsigned per_block_ptrs = cluster_size / 4;
-
-	for (unsigned lb = 0; lb < blocks_needed; lb++)
+	unsigned long long bytes_copiados = 0;
+	for (unsigned long long lb = 0; lb < total_blocks; lb++)
 	{
-		unsigned phys_block = 0;
+		unsigned data_block = 0;
 
 		if (lb < 12)
 		{
-			phys_block = (unsigned)inode_file.i_block[lb];
+			data_block = (unsigned)inode_f.i_block[lb];
 		}
-		else if (lb < 12 + per_block_ptrs)
+		else if (lb < 12 + entradas_por_ptr)
 		{
-			/* single indirect */
-			unsigned idx = lb - 12;
-			unsigned indirect_block = (unsigned)inode_file.i_block[12];
-			if (indirect_block == 0)
+			/* simple indirect */
+			if (inode_f.i_block[12] != 0)
 			{
-				phys_block = 0;
-			}
-			else
-			{
-				const unsigned char *ind = PunteroASector((__u64)indirect_block * sectores_por_cluster);
-				if (!ind)
+				const unsigned char *pp = PunteroASector((__u64)inode_f.i_block[12] * sectores_por_cluster);
+				if (!pp)
 				{
 					free(Data);
 					Data = NULL;
 					DataLen = 0;
 					return CODERROR_LECTURA_DISCO;
 				}
-				phys_block = RD32_FROM_PTR(ind, idx*4);
+				unsigned idx = (unsigned)(lb - 12);
+				unsigned offp = idx * 4;
+				data_block = pp[offp] | (pp[offp+1] << 8) | (pp[offp+2] << 16) | (pp[offp+3] << 24);
 			}
+			else
+				data_block = 0;
 		}
-		else if (lb < 12 + per_block_ptrs + per_block_ptrs * per_block_ptrs)
+		else if (lb < 12 + entradas_por_ptr + entradas_por_ptr * entradas_por_ptr)
 		{
 			/* double indirect */
-			unsigned rem = lb - (12 + per_block_ptrs);
-			unsigned idx1 = rem / per_block_ptrs;
-			unsigned idx2 = rem % per_block_ptrs;
-			unsigned dbl_block = (unsigned)inode_file.i_block[13];
-			if (dbl_block == 0)
+			if (inode_f.i_block[13] != 0)
 			{
-				phys_block = 0;
-			}
-			else
-			{
-				const unsigned char *dbl = PunteroASector((__u64)dbl_block * sectores_por_cluster);
-				if (!dbl)
+				unsigned rem = (unsigned)(lb - 12 - entradas_por_ptr);
+				unsigned idx1 = rem / entradas_por_ptr;
+				unsigned idx2 = rem % entradas_por_ptr;
+
+				const unsigned char *pp1 = PunteroASector((__u64)inode_f.i_block[13] * sectores_por_cluster);
+				if (!pp1)
 				{
 					free(Data);
 					Data = NULL;
 					DataLen = 0;
 					return CODERROR_LECTURA_DISCO;
 				}
-				unsigned first_level = RD32_FROM_PTR(dbl, idx1*4);
-				if (first_level == 0)
+				unsigned off1 = idx1 * 4;
+				unsigned ptr1 = pp1[off1] | (pp1[off1+1] << 8) | (pp1[off1+2] << 16) | (pp1[off1+3] << 24);
+				if (ptr1 == 0)
 				{
-					phys_block = 0;
+					data_block = 0;
 				}
 				else
 				{
-					const unsigned char *ind2 = PunteroASector((__u64)first_level * sectores_por_cluster);
-					if (!ind2)
+					const unsigned char *pp2 = PunteroASector((__u64)ptr1 * sectores_por_cluster);
+					if (!pp2)
 					{
 						free(Data);
 						Data = NULL;
 						DataLen = 0;
 						return CODERROR_LECTURA_DISCO;
 					}
-					phys_block = RD32_FROM_PTR(ind2, idx2*4);
+					unsigned off2 = idx2 * 4;
+					data_block = pp2[off2] | (pp2[off2+1] << 8) | (pp2[off2+2] << 16) | (pp2[off2+3] << 24);
 				}
 			}
+			else
+				data_block = 0;
 		}
 		else
 		{
-			/* triple indirect not implemented fully: treat as sparse */
-			phys_block = 0;
+			/* triple indirect */
+			if (inode_f.i_block[14] != 0)
+			{
+				unsigned rem = (unsigned)(lb - 12 - entradas_por_ptr - entradas_por_ptr * entradas_por_ptr);
+				unsigned idx1 = rem / (entradas_por_ptr * entradas_por_ptr);
+				unsigned idx_rem = rem % (entradas_por_ptr * entradas_por_ptr);
+				unsigned idx2 = idx_rem / entradas_por_ptr;
+				unsigned idx3 = idx_rem % entradas_por_ptr;
+
+				const unsigned char *pp1 = PunteroASector((__u64)inode_f.i_block[14] * sectores_por_cluster);
+				if (!pp1)
+				{
+					free(Data);
+					Data = NULL;
+					DataLen = 0;
+					return CODERROR_LECTURA_DISCO;
+				}
+				unsigned off1 = idx1 * 4;
+				unsigned ptr1 = pp1[off1] | (pp1[off1+1] << 8) | (pp1[off1+2] << 16) | (pp1[off1+3] << 24);
+				if (ptr1 == 0)
+				{
+					data_block = 0;
+				}
+				else
+				{
+					const unsigned char *pp2 = PunteroASector((__u64)ptr1 * sectores_por_cluster);
+					if (!pp2)
+					{
+						free(Data);
+						Data = NULL;
+						DataLen = 0;
+						return CODERROR_LECTURA_DISCO;
+					}
+					unsigned off2 = idx2 * 4;
+					unsigned ptr2 = pp2[off2] | (pp2[off2+1] << 8) | (pp2[off2+2] << 16) | (pp2[off2+3] << 24);
+					if (ptr2 == 0)
+					{
+						data_block = 0;
+					}
+					else
+					{
+						const unsigned char *pp3 = PunteroASector((__u64)ptr2 * sectores_por_cluster);
+						if (!pp3)
+						{
+							free(Data);
+							Data = NULL;
+							DataLen = 0;
+							return CODERROR_LECTURA_DISCO;
+						}
+						unsigned off3 = idx3 * 4;
+						data_block = pp3[off3] | (pp3[off3+1] << 8) | (pp3[off3+2] << 16) | (pp3[off3+3] << 24);
+					}
+				}
+			}
+			else
+				data_block = 0;
 		}
 
-		/* Copy block data (or zeroes if sparse) */
-		unsigned to_copy = min(cluster_size, DataLen - copied_total);
-		if (phys_block == 0)
+		/* Copiar datos (si data_block==0 -> agujero -> rellenar ceros) */
+		unsigned long long to_copy = DatosFS.BytesPorCluster;
+		unsigned long long remain = size - bytes_copiados;
+		if (remain < to_copy)
+			to_copy = remain;
+
+		if (data_block == 0)
 		{
-			/* fill with zeros */
-			memset(Data + copied_total, 0, to_copy);
+			/* llenar con ceros */
+			memset(Data + bytes_copiados, 0, (size_t)to_copy);
 		}
 		else
 		{
-			const unsigned char *pdat = PunteroASector((__u64)phys_block * sectores_por_cluster);
-			if (!pdat)
+			const unsigned char *db = PunteroASector((__u64)data_block * sectores_por_cluster);
+			if (!db)
 			{
 				free(Data);
 				Data = NULL;
 				DataLen = 0;
 				return CODERROR_LECTURA_DISCO;
 			}
-			memcpy(Data + copied_total, pdat, to_copy);
+			memcpy(Data + bytes_copiados, db, (size_t)to_copy);
 		}
 
-		copied_total += to_copy;
+		bytes_copiados += to_copy;
 	}
-
-	#undef RD32_FROM_PTR
 
 	return CODERROR_NINGUNO;
 }
