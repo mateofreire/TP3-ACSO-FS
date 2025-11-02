@@ -171,7 +171,6 @@ int TDriverEXT::LevantarDatosSuperbloque()
  ****************************************************************************************************************************************/
 int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectorio> &Entradas)
 {
-	/* Implementación exclusivamente para EXT2. No usa lambdas ni auto. */
 	Entradas.clear();
 
 	if (!Path)
@@ -441,7 +440,11 @@ int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectori
 				unsigned long long size = (unsigned long long)inode_e.i_size_lo;
 				size |= ((unsigned long long)inode_e.i_size_high) << 32;
 				e.Bytes = size;
-				e.FechaCreacion = (time_t)inode_e.i_crtime;
+				/* i_crtime may not be present in older inode sizes; fallback to i_ctime */
+				if (bytes_por_inode > 148)
+					e.FechaCreacion = (time_t)inode_e.i_crtime;
+				else
+					e.FechaCreacion = (time_t)inode_e.i_ctime;
 				e.FechaUltimoAcceso = (time_t)inode_e.i_atime;
 				e.FechaUltimaModificacion = (time_t)inode_e.i_mtime;
 				e.Flags = 0;
