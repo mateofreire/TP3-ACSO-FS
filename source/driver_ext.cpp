@@ -440,11 +440,8 @@ int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectori
 				unsigned long long size = (unsigned long long)inode_e.i_size_lo;
 				size |= ((unsigned long long)inode_e.i_size_high) << 32;
 				e.Bytes = size;
-				/* i_crtime may not be present in older inode sizes; fallback to i_ctime */
-				if (bytes_por_inode > 148)
-					e.FechaCreacion = (time_t)inode_e.i_crtime;
-				else
-					e.FechaCreacion = (time_t)inode_e.i_ctime;
+				/* la fecha de creacion esta mal en el diff pero no entendemos porque si todo el resto de las fechas estan bien */
+				e.FechaCreacion = (time_t)inode_e.i_crtime;
 				e.FechaUltimoAcceso = (time_t)inode_e.i_atime;
 				e.FechaUltimaModificacion = (time_t)inode_e.i_mtime;
 				e.Flags = 0;
