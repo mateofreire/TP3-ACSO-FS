@@ -129,7 +129,7 @@ int TDriverEXT::LevantarDatosSuperbloque()
 			unsigned offset_in_block = (i % desc_per_block) * desc_size;
 			const unsigned char *p = pblock + offset_in_block;
 
-			/* Lectura little-endian desde p */
+			/* Lectura little endian desde p */
 			#define RD32P(o) ((unsigned int)(p[(o)] | (p[(o)+1] << 8) | (p[(o)+2] << 16) | (p[(o)+3] << 24)))
 
 			unsigned block_bitmap = RD32P(0);
@@ -176,7 +176,6 @@ int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectori
 	if (!Path)
 		return CODERROR_PARAMETROS_INVALIDOS;
 
-	/* Ruta debe ser absoluta */
 	if (Path[0] != '/')
 		return CODERROR_RUTA_NO_ABSOLUTA;
 
@@ -185,18 +184,17 @@ int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectori
 
 	unsigned sectores_por_cluster = DatosFS.BytesPorCluster / DatosFS.BytesPorSector;
 
-	/* Shortcut variables from DatosFS to avoid repetir accesos */
 	unsigned inodes_por_grupo = (unsigned)DatosFS.DatosEspecificos.EXT.INodesPorGrupo;
 	unsigned bytes_por_inode = (unsigned)DatosFS.DatosEspecificos.EXT.BytesPorINode;
 	unsigned nro_grupos = (unsigned)DatosFS.DatosEspecificos.EXT.NroGrupos;
 
-	/* Funcionamiento: resolver la ruta componente a componente, empezando en la raiz (inode 2) */
+	/* Resolver la ruta componente a componente, empezando en la raiz (inode 2) */
 	unsigned current_inode = EXT_ROOT_INO; /* 2 */
 	std::string ruta(Path);
 
 	if (ruta != "/")
 	{
-		size_t pos = 1; /* saltar primer slash */
+		size_t pos = 1; /* Saltar la primer / */
 		while (pos < ruta.size())
 		{
 			size_t next = ruta.find('/', pos);
@@ -207,7 +205,7 @@ int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectori
 				continue;
 			}
 
-			/* Leer inode del directorio actual (current_inode) */
+			/* Leer inode del directorio actual */
 			if (current_inode == 0 || current_inode > (unsigned)DatosFS.DatosEspecificos.EXT.NumeroDeINodes)
 				return CODERROR_DIRECTORIO_INEXISTENTE;
 
@@ -230,7 +228,7 @@ int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectori
 			TINodeEXT inode_dir;
 			memset(&inode_dir, 0, sizeof(inode_dir));
 
-			/* Copiar el inode, manejando cruce de cluster si es necesario */
+			/* Copiar el inode */
 			if (offset_in_block + bytes_por_inode <= (unsigned)DatosFS.BytesPorCluster)
 			{
 				memcpy(&inode_dir, pblock + offset_in_block, (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT));
@@ -306,7 +304,7 @@ int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectori
 		}
 	}
 
-	/* Ahora current_inode es el inode del directorio a listar: leerlo y listar sus entradas */
+	/* Ahora current_inode es el inodo del directorio a listar, lo leemos y listamos sus entradas */
 	if (current_inode == 0 || current_inode > (unsigned)DatosFS.DatosEspecificos.EXT.NumeroDeINodes)
 		return CODERROR_DIRECTORIO_INEXISTENTE;
 
@@ -354,7 +352,7 @@ int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectori
 	if (!S_ISDIR(inode_dir_root.i_mode))
 		return CODERROR_DIRECTORIO_INEXISTENTE;
 
-	/* Recorremos sus bloques directos y añadimos cada entrada a Entradas */
+	/* Recorremos los bloques directos y añadimos cada entrada a Entradas */
 	for (int bi = 0; bi < 12; bi++)
 	{
 		unsigned data_block = (unsigned)inode_dir_root.i_block[bi];
@@ -440,7 +438,7 @@ int TDriverEXT::ListarDirectorio(const char *Path, std::vector<TEntradaDirectori
 				unsigned long long size = (unsigned long long)inode_e.i_size_lo;
 				size |= ((unsigned long long)inode_e.i_size_high) << 32;
 				e.Bytes = size;
-				/* la fecha de creacion esta mal en el diff pero no entendemos porque si todo el resto de las fechas estan bien */
+				/* la fecha de creacion esta mal en el diff pero no entendemos porque si todo el resto de las fechas estan bien (como que no es del modo de lectura de little endian porque es el mismo en todas las entradas, es como que ni aparece)*/
 				e.FechaCreacion = (time_t)inode_e.i_crtime;
 				e.FechaUltimoAcceso = (time_t)inode_e.i_atime;
 				e.FechaUltimaModificacion = (time_t)inode_e.i_mtime;
@@ -480,7 +478,6 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 	if (!Path)
 		return CODERROR_PARAMETROS_INVALIDOS;
 
-	/* Ruta absoluta */
 	if (Path[0] != '/')
 		return CODERROR_RUTA_NO_ABSOLUTA;
 
@@ -489,18 +486,17 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 
 	unsigned sectores_por_cluster = DatosFS.BytesPorCluster / DatosFS.BytesPorSector;
 
-	/* Shortcut variables */
 	unsigned inodes_por_grupo = (unsigned)DatosFS.DatosEspecificos.EXT.INodesPorGrupo;
 	unsigned bytes_por_inode = (unsigned)DatosFS.DatosEspecificos.EXT.BytesPorINode;
 	unsigned nro_grupos = (unsigned)DatosFS.DatosEspecificos.EXT.NroGrupos;
 
-	/* Resolver la ruta componente a componente (igual que en ListarDirectorio) */
-	unsigned current_inode = EXT_ROOT_INO; /* 2 */
+	/* Resolver la ruta igual que en ListarDirectorio */
+	unsigned current_inode = EXT_ROOT_INO; /* inodo 2 */
 	std::string ruta(Path);
 
 	if (ruta != "/")
 	{
-		size_t pos = 1; /* saltar primer slash */
+		size_t pos = 1;
 		while (pos < ruta.size())
 		{
 			size_t next = ruta.find('/', pos);
@@ -533,7 +529,6 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 			TINodeEXT inode_dir;
 			memset(&inode_dir, 0, sizeof(inode_dir));
 
-			/* Copiar el inode, manejando cruce de cluster si es necesario */
 			if (offset_in_block + bytes_por_inode <= (unsigned)DatosFS.BytesPorCluster)
 			{
 				memcpy(&inode_dir, pblock + offset_in_block, (bytes_por_inode < sizeof(TINodeEXT)) ? bytes_por_inode : sizeof(TINodeEXT));
@@ -558,7 +553,7 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 				}
 			}
 
-			/* Verificar que sea directorio para poder buscar dentro */
+			/* Verificar que sea directorio para poder buscar */
 			if (!S_ISDIR(inode_dir.i_mode))
 				return CODERROR_ARCHIVO_INEXISTENTE;
 
@@ -607,7 +602,7 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 		}
 	}
 
-	/* Ahora current_inode es el inode del archivo a leer: leerlo */
+	/* Ahora current_inode es el inode del archivo a leer*/
 	if (current_inode == 0 || current_inode > (unsigned)DatosFS.DatosEspecificos.EXT.NumeroDeINodes)
 		return CODERROR_ARCHIVO_INEXISTENTE;
 
@@ -652,7 +647,7 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 		}
 	}
 
-	/* No permitir leer directorios como archivos */
+	/* No podemos leer directorios como archivos */
 	if (S_ISDIR(inode_file.i_mode))
 		return CODERROR_ARCHIVO_INEXISTENTE;
 
@@ -666,7 +661,7 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 		return CODERROR_NINGUNO;
 	}
 
-	/* Truncar a 32 bits si fuera mayor (interface uses unsigned) */
+	/* Truncar a 32 bits */
 	if (size > (unsigned long long)UINT_MAX)
 		return CODERROR_ARCHIVO_INVALIDO;
 
@@ -694,7 +689,7 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 		}
 		else if (lb < 12 + per_block_ptrs)
 		{
-			/* single indirect */
+			/* Indirecto simple */
 			unsigned idx = lb - 12;
 			unsigned indirect_block = (unsigned)inode_file.i_block[12];
 			if (indirect_block == 0)
@@ -716,7 +711,7 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 		}
 		else if (lb < 12 + per_block_ptrs + per_block_ptrs * per_block_ptrs)
 		{
-			/* double indirect */
+			/* Indirecto doble */
 			unsigned rem = lb - (12 + per_block_ptrs);
 			unsigned idx1 = rem / per_block_ptrs;
 			unsigned idx2 = rem % per_block_ptrs;
@@ -756,15 +751,14 @@ int TDriverEXT::LeerArchivo(const char *Path, unsigned char *&Data, unsigned &Da
 		}
 		else
 		{
-			/* triple indirect not implemented fully: treat as sparse */
+			/* Triple indirecto no lo implementamos */
 			phys_block = 0;
 		}
 
-		/* Copy block data (or zeroes if sparse) */
+		/* Copiar */
 		unsigned to_copy = min(cluster_size, DataLen - copied_total);
 		if (phys_block == 0)
 		{
-			/* fill with zeros */
 			memset(Data + copied_total, 0, to_copy);
 		}
 		else
